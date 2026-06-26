@@ -44,10 +44,15 @@ class PositionManager:
             return
 
         order_id = order.get("order_id", "?")
-        filled = order.get("fill_count", "?")
-        fill_price = order.get("average_fill_price", "?")
-        print(f"[buy]  order {order_id}  filled={filled} @ {fill_price}")
-        self._positions[ticker] = Position(ticker=ticker, count=count, entry_ask=entry_ask)
+        filled = float(order.get("fill_count") or 0)
+        fill_price_str = order.get("average_fill_price")
+        actual_entry = float(fill_price_str) if fill_price_str else entry_ask
+        print(f"[buy]  order {order_id}  filled={filled:.0f} @ {actual_entry:.4f}"
+              + (f"  (signal was {entry_ask:.4f})" if abs(actual_entry - entry_ask) > 0.01 else ""))
+        if filled == 0:
+            print(f"[buy]  no fill — skipping position")
+            return
+        self._positions[ticker] = Position(ticker=ticker, count=int(filled), entry_ask=actual_entry)
 
     async def on_tick(self, tick: dict):
         ticker = tick.get("market_ticker")
