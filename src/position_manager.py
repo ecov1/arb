@@ -19,9 +19,10 @@ class Position:
 
 
 class PositionManager:
-    def __init__(self, api_key_id: str, private_key):
+    def __init__(self, api_key_id: str, private_key, dry_run: bool = False):
         self._api_key_id = api_key_id
         self._private_key = private_key
+        self._dry_run = dry_run
         self._positions: dict[str, Position] = {}
 
     async def open(self, ticker: str, entry_ask: float):
@@ -29,6 +30,11 @@ class PositionManager:
             return  # already in this market
 
         count = max(1, int(TRADE_DOLLARS / entry_ask))
+
+        if self._dry_run:
+            print(f"\n[DRY RUN buy]  {ticker}  {count} contracts @ ~{entry_ask:.4f}  (not sent)")
+            self._positions[ticker] = Position(ticker=ticker, count=count, entry_ask=entry_ask)
+            return
 
         print(f"\n[buy]  {ticker}  {count} contracts @ ~{entry_ask:.4f}")
         try:
@@ -67,10 +73,12 @@ class PositionManager:
 
     async def _exit(self, pos: Position, reason: str):
         del self._positions[pos.ticker]
-        profit_est = (TARGET_ASK - pos.entry_ask) * pos.count
-        print(f"\n[sell] {pos.ticker}  {pos.count} contracts — {reason}")
+        profit_est = (pos.current_bid - pos.entry_ask) * pos.count
+        print(f"\n[{'DRY RUN ' if self._dry_run else ''}sell] {pos.ticker}  {pos.count} contracts — {reason}  est. P&L: ${profit_est:+.2f}")
+        if self._dry_run:
+            return
         try:
             order = await sell(self._api_key_id, self._private_key, pos.ticker, pos.count, bid=pos.current_bid)
-            print(f"[sell] order {order.get('order_id', '?')} placed  est. P&L: ${profit_est:+.2f}")
+            print(f"[sell] order {order.get('order_id', '?')} placed")
         except Exception as e:
             print(f"[sell] FAILED: {e}")

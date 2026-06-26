@@ -10,6 +10,8 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 DEMO_WS_URL = "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
 DEMO_REST_URL = "https://demo-api.kalshi.co/trade-api/v2"
+PROD_WS_URL = "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
+PROD_REST_URL = "https://external-api.kalshi.com/trade-api/v2"
 _WS_PATH = "/trade-api/ws/v2"
 
 _ORDERBOOK_BATCH = 200  # max tickers per subscribe message
@@ -47,14 +49,14 @@ def _auth_headers(api_key_id: str, private_key) -> dict:
     return _sign(api_key_id, private_key, "GET", _WS_PATH)
 
 
-async def fetch_markets(api_key_id: str, private_key, on_first_page=None) -> list[dict]:
+async def fetch_markets(api_key_id: str, private_key, on_first_page=None, rest_url: str = DEMO_REST_URL) -> list[dict]:
     """Fetch all open markets from the REST API, returning full market objects."""
     markets_out = []
     cursor = None
     path = "/trade-api/v2/markets"
     page = 0
 
-    async with httpx.AsyncClient(base_url=DEMO_REST_URL, timeout=15) as client:
+    async with httpx.AsyncClient(base_url=rest_url, timeout=15) as client:
         while True:
             params = {"status": "open", "limit": 1000}
             if cursor:
@@ -78,23 +80,22 @@ async def fetch_markets(api_key_id: str, private_key, on_first_page=None) -> lis
 
 
 class MarketCache:
-    def __init__(self, api_key_id: str, private_key):
+    def __init__(self, api_key_id: str, private_key, rest_url: str = DEMO_REST_URL):
         self._api_key_id = api_key_id
         self._private_key = private_key
+        self._rest_url = rest_url
         self._cache: dict[str, str] = {}
 
     async def ask(self, market_ticker: str) -> float | None:
         path = f"/trade-api/v2/markets/{market_ticker}"
         headers = _sign(self._api_key_id, self._private_key, "GET", path)
         try:
-            async with httpx.AsyncClient(base_url=DEMO_REST_URL) as client:
+            async with httpx.AsyncClient(base_url=self._rest_url) as client:
                 r = await client.get(f"/markets/{market_ticker}", headers=headers)
                 r.raise_for_status()
                 m = r.json().get("market", {})
-                # Store title while we're here
                 if "title" in m:
                     self._cache[market_ticker] = m["title"]
-                # yes_ask is in cents (0-100), convert to dollars
                 yes_ask = m.get("yes_ask")
                 return float(yes_ask) / 100 if yes_ask is not None else None
         except Exception:
@@ -106,7 +107,7 @@ class MarketCache:
         path = f"/trade-api/v2/markets/{market_ticker}"
         headers = _sign(self._api_key_id, self._private_key, "GET", path)
         try:
-            async with httpx.AsyncClient(base_url=DEMO_REST_URL) as client:
+            async with httpx.AsyncClient(base_url=self._rest_url) as client:
                 r = await client.get(f"/markets/{market_ticker}", headers=headers)
                 r.raise_for_status()
                 title = r.json().get("market", {}).get("title", market_ticker)
@@ -122,16 +123,17 @@ async def stream(
     on_orderbook,
     orderbook_tickers: list[str],
     on_ticker=None,
+    ws_url: str = DEMO_WS_URL,
 ):
     """
-    Connect to Kalshi demo WebSocket and stream:
+    Connect to Kalshi WebSocket and stream:
       - orderbook_delta for specified markets (primary signal)
       - ticker for all markets (optional, secondary)
     """
     headers = _auth_headers(api_key_id, private_key)
 
     async with websockets.connect(
-        DEMO_WS_URL,
+        ws_url,
         additional_headers=headers,
         max_size=2**23,  # 8MB — large snapshots can exceed default
     ) as ws:

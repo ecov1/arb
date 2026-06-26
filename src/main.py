@@ -4,19 +4,39 @@ import os
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-from client import load_private_key, fetch_markets, stream, MarketCache
+from client import (
+    load_private_key, fetch_markets, stream, MarketCache,
+    DEMO_WS_URL, DEMO_REST_URL, PROD_WS_URL, PROD_REST_URL,
+)
 from orderbook_detector import OrderBookDetector
 from tracker import SignalTracker
 from position_manager import PositionManager
 
 load_dotenv()
 
-API_KEY_ID = os.environ["KALSHI_API_KEY_ID"]
-PRIVATE_KEY = (
-    os.environ.get("KALSHI_KEY")
-    or os.environ.get("KALSHI_PRIVATE_KEY")
-    or os.environ["KALSHI_PRIVATE_KEY_PATH"]
-)
+# Set KALSHI_ENV=prod to use production data feed (dry-run by default on prod)
+ENV = os.environ.get("KALSHI_ENV", "demo").lower()
+
+if ENV == "prod":
+    API_KEY_ID = os.environ["KALSHI_PROD_API_KEY_ID"]
+    PRIVATE_KEY = (
+        os.environ.get("KALSHI_PROD_KEY")
+        or os.environ["KALSHI_PROD_KEY_PATH"]
+    )
+    WS_URL = PROD_WS_URL
+    REST_URL = PROD_REST_URL
+    # Never place real orders unless explicitly opted in
+    DRY_RUN = os.environ.get("KALSHI_LIVE_ORDERS", "").lower() != "true"
+else:
+    API_KEY_ID = os.environ["KALSHI_API_KEY_ID"]
+    PRIVATE_KEY = (
+        os.environ.get("KALSHI_KEY")
+        or os.environ.get("KALSHI_PRIVATE_KEY")
+        or os.environ["KALSHI_PRIVATE_KEY_PATH"]
+    )
+    WS_URL = DEMO_WS_URL
+    REST_URL = DEMO_REST_URL
+    DRY_RUN = False
 
 SPORTS_PREFIXES = ("KXWC", "KXMLB", "KXNBA", "KXNFL", "KXNHL", "KXSOC")
 
@@ -40,14 +60,14 @@ _ob_msg_count = 0
 _top_deltas: list[tuple[float, str]] = []
 
 
-async def check_exchange_status(api_key_id: str, private_key) -> bool:
+async def check_exchange_status(api_key_id: str, private_key, rest_url: str) -> bool:
     """Returns True if the exchange is active and accepting orders."""
     import httpx
-    from client import _sign, DEMO_REST_URL
+    from client import _sign
     path = "/trade-api/v2/exchange/status"
     headers = _sign(api_key_id, private_key, "GET", path)
     try:
-        async with httpx.AsyncClient(base_url=DEMO_REST_URL, timeout=5) as c:
+        async with httpx.AsyncClient(base_url=rest_url, timeout=5) as c:
             r = await c.get("/exchange/status", headers=headers)
             data = r.json()
             active = data.get("exchange_active", False)
@@ -62,9 +82,12 @@ async def check_exchange_status(api_key_id: str, private_key) -> bool:
 
 
 async def main():
+    env_label = "PROD (dry-run)" if ENV == "prod" and DRY_RUN else ENV.upper()
+    print(f"[arb] starting  env={env_label}")
+
     private_key = load_private_key(PRIVATE_KEY)
-    cache = MarketCache(API_KEY_ID, private_key)
-    await check_exchange_status(API_KEY_ID, private_key)
+    cache = MarketCache(API_KEY_ID, private_key, rest_url=REST_URL)
+    await check_exchange_status(API_KEY_ID, private_key, REST_URL)
 
     async def on_result(track):
         title = await cache.title(track.market_ticker)
@@ -84,7 +107,7 @@ async def main():
         )
 
     tracker = SignalTracker(on_result=on_result)
-    positions = PositionManager(API_KEY_ID, private_key)
+    positions = PositionManager(API_KEY_ID, private_key, dry_run=DRY_RUN)
 
     cache_file = Path(".markets_cache.json")
     cache_max_age = timedelta(hours=1)
@@ -96,11 +119,11 @@ async def main():
             all_markets = json.loads(cache_file.read_text())
         else:
             print(f"[arb] cache expired, re-fetching ...")
-            all_markets = await fetch_markets(API_KEY_ID, private_key)
+            all_markets = await fetch_markets(API_KEY_ID, private_key, rest_url=REST_URL)
             cache_file.write_text(json.dumps(all_markets))
     else:
         print(f"[arb] fetching open markets ...")
-        all_markets = await fetch_markets(API_KEY_ID, private_key)
+        all_markets = await fetch_markets(API_KEY_ID, private_key, rest_url=REST_URL)
         cache_file.write_text(json.dumps(all_markets))
 
     sports_markets = [
@@ -121,11 +144,18 @@ async def main():
 
     tickers = [m["ticker"] for m in sports_markets]
 
+    _exchange_was_active = False
+
     async def heartbeat():
+        nonlocal _exchange_was_active
         while True:
             await asyncio.sleep(30)
             top = sorted(_top_deltas, reverse=True)[:5]
             top_str = "  ".join(f"{s:.1f}({t})" for s, t in top)
+            exchange_active = await check_exchange_status(API_KEY_ID, private_key, REST_URL)
+            if exchange_active and not _exchange_was_active:
+                print(f"\n[arb] *** EXCHANGE IS NOW OPEN — orders will go through ***\n")
+            _exchange_was_active = exchange_active
             print(f"[arb] heartbeat — {_ob_msg_count} msgs  top neg deltas: {top_str or 'none'}")
 
     asyncio.ensure_future(heartbeat())
@@ -180,6 +210,7 @@ async def main():
                 on_orderbook,
                 orderbook_tickers=tickers,
                 on_ticker=on_ticker,
+                ws_url=WS_URL,
             )
         except Exception as e:
             print(f"[arb] connection lost: {e} — reconnecting in 5s ...")
