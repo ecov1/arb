@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from client import load_private_key, fetch_markets, stream, MarketCache
 from orderbook_detector import OrderBookDetector
 from tracker import SignalTracker
+from position_manager import PositionManager
 
 load_dotenv()
 
@@ -61,6 +62,7 @@ async def main():
         )
 
     tracker = SignalTracker(on_result=on_result)
+    positions = PositionManager(API_KEY_ID, private_key)
 
     cache_file = Path(".markets_cache.json")
     cache_max_age = timedelta(hours=1)
@@ -81,23 +83,21 @@ async def main():
 
     now = datetime.now(timezone.utc)
 
-    def is_live(m: dict) -> bool:
+    def closes_within(m: dict, hours: float) -> bool:
         try:
-            open_time = datetime.fromisoformat(m["open_time"].replace("Z", "+00:00"))
             close_time = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
+            return now <= close_time <= now + timedelta(hours=hours)
         except (KeyError, ValueError, AttributeError):
             return False
-        # Game must have already opened and close within the next 4 hours
-        return open_time <= now <= close_time <= now + timedelta(hours=4)
 
     sports_markets = [
         m for m in all_markets
         if m["ticker"].startswith(SPORTS_PREFIXES)
         and not m["ticker"].startswith(EXCLUDED_PREFIXES)
-        and is_live(m)
+        and closes_within(m, 24)
     ]
 
-    print(f"[arb] {len(sports_markets)} currently live sports markets (from {len(all_markets)} total)")
+    print(f"[arb] {len(sports_markets)} sports markets closing within 24h (from {len(all_markets)} total)")
 
     # Pre-populate ask prices from REST response
     for m in sports_markets:
@@ -150,6 +150,7 @@ async def main():
             f"\n"
         )
         tracker.start(signal.market_ticker, signal.ts_ms, ask)
+        await positions.open(signal.market_ticker, ask)
 
     async def on_ticker(tick: dict):
         ticker = tick.get("market_ticker")
@@ -157,6 +158,7 @@ async def main():
         if ticker and ask_raw:
             latest_ask[ticker] = float(ask_raw)
         await tracker.on_tick(tick)
+        await positions.on_tick(tick)
 
     while True:
         try:

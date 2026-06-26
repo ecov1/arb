@@ -145,7 +145,7 @@ async def stream(
                 "params": {"channels": ["ticker"]},
             }))
 
-        # Subscribe orderbook_delta in batches
+        # Subscribe orderbook_delta in batches with a small pause between each
         for i, start in enumerate(range(0, len(orderbook_tickers), _ORDERBOOK_BATCH)):
             batch = orderbook_tickers[start:start + _ORDERBOOK_BATCH]
             await ws.send(json.dumps({
@@ -156,6 +156,7 @@ async def stream(
                     "market_tickers": batch,
                 },
             }))
+            await asyncio.sleep(0.05)  # 50ms between batches to avoid flooding
 
         print(f"[kalshi] subscribed to orderbook_delta for {len(orderbook_tickers)} markets")
 
