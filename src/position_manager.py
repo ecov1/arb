@@ -44,7 +44,9 @@ class PositionManager:
             return
 
         order_id = order.get("order_id", "?")
-        print(f"[buy]  order {order_id} placed")
+        filled = order.get("fill_count", "?")
+        fill_price = order.get("average_fill_price", "?")
+        print(f"[buy]  order {order_id}  filled={filled} @ {fill_price}")
         self._positions[ticker] = Position(ticker=ticker, count=count, entry_ask=entry_ask)
 
     async def on_tick(self, tick: dict):
@@ -79,6 +81,8 @@ class PositionManager:
             return
         try:
             order = await sell(self._api_key_id, self._private_key, pos.ticker, pos.count, bid=pos.current_bid)
-            print(f"[sell] order {order.get('order_id', '?')} placed")
+            filled = order.get("fill_count", "?")
+            fill_price = order.get("average_fill_price", "?")
+            print(f"[sell] order {order.get('order_id','?')}  filled={filled} @ {fill_price}")
         except Exception as e:
             print(f"[sell] FAILED: {e}")

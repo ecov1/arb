@@ -26,16 +26,17 @@ async def place_order(
         r = await client.post("/portfolio/events/orders", headers=headers, json=body)
         if not r.is_success:
             raise Exception(f"HTTP {r.status_code}: {r.text}")
-        return r.json().get("order", {})
+        return r.json()
 
 
 async def buy(api_key_id: str, private_key, ticker: str, count: int, ask: float = 0.99) -> dict:
-    # Bid slightly above current ask to guarantee IOC fill
-    price = min(0.99, round(ask + 0.02, 2))
+    # Bid well above current ask — market is spiking so we need to chase it.
+    # Cap at 0.99 so we never overpay on an already-resolved market.
+    price = min(0.99, round(ask + 0.10, 2))
     return await place_order(api_key_id, private_key, ticker, "bid", count, price)
 
 
 async def sell(api_key_id: str, private_key, ticker: str, count: int, bid: float = 0.01) -> dict:
-    # Ask slightly below current bid to guarantee IOC fill
-    price = max(0.01, round(bid - 0.02, 2))
+    # Ask well below current bid to guarantee IOC fill on exit.
+    price = max(0.01, round(bid - 0.10, 2))
     return await place_order(api_key_id, private_key, ticker, "ask", count, price)
