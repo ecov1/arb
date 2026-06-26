@@ -40,9 +40,31 @@ _ob_msg_count = 0
 _top_deltas: list[tuple[float, str]] = []
 
 
+async def check_exchange_status(api_key_id: str, private_key) -> bool:
+    """Returns True if the exchange is active and accepting orders."""
+    import httpx
+    from client import _sign, DEMO_REST_URL
+    path = "/trade-api/v2/exchange/status"
+    headers = _sign(api_key_id, private_key, "GET", path)
+    try:
+        async with httpx.AsyncClient(base_url=DEMO_REST_URL, timeout=5) as c:
+            r = await c.get("/exchange/status", headers=headers)
+            data = r.json()
+            active = data.get("exchange_active", False)
+            trading = data.get("trading_active", False)
+            print(f"[arb] exchange status: active={active}  trading={trading}")
+            if not active:
+                print(f"[arb] WARNING: exchange is paused — orders will be rejected (409)")
+            return active
+    except Exception as e:
+        print(f"[arb] could not fetch exchange status: {e}")
+        return True  # assume open if we can't check
+
+
 async def main():
     private_key = load_private_key(PRIVATE_KEY)
     cache = MarketCache(API_KEY_ID, private_key)
+    await check_exchange_status(API_KEY_ID, private_key)
 
     async def on_result(track):
         title = await cache.title(track.market_ticker)
@@ -81,23 +103,14 @@ async def main():
         all_markets = await fetch_markets(API_KEY_ID, private_key)
         cache_file.write_text(json.dumps(all_markets))
 
-    now = datetime.now(timezone.utc)
-
-    def closes_within(m: dict, hours: float) -> bool:
-        try:
-            close_time = datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
-            return now <= close_time <= now + timedelta(hours=hours)
-        except (KeyError, ValueError, AttributeError):
-            return False
-
     sports_markets = [
         m for m in all_markets
         if m["ticker"].startswith(SPORTS_PREFIXES)
         and not m["ticker"].startswith(EXCLUDED_PREFIXES)
-        and closes_within(m, 24)
+        and TODAY_STR in m["ticker"]
     ]
 
-    print(f"[arb] {len(sports_markets)} sports markets closing within 24h (from {len(all_markets)} total)")
+    print(f"[arb] {len(sports_markets)} sports markets for {TODAY_STR} (from {len(all_markets)} total)")
 
     # Pre-populate ask prices from REST response
     for m in sports_markets:

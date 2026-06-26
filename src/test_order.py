@@ -24,9 +24,10 @@ PRIVATE_KEY = load_private_key(
 SPORTS_PREFIXES = ("KXWC", "KXMLB", "KXNBA", "KXNFL", "KXNHL", "KXSOC")
 # Known-good sports tickers to try directly (faster than full pagination)
 _SEED_TICKERS = [
+    "KXWCGOAL-26JUN26NORFRA-FRAKMBAPP10-1",   # WC Norway vs France - Mbappe 1+ goals
+    "KXWCGOAL-26JUN26NORFRA-FRAODEMBE10-1",   # WC Norway vs France - Dembele 1+ goals
     "KXMLBGAME-26JUN271910SEACLE-CLE",
     "KXMLBGAME-26JUN271910SEACLE-SEA",
-    "KXWCGAME-26JUN14GERCUW-CUW",
 ]
 
 
