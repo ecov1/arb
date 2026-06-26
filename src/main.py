@@ -49,9 +49,10 @@ _today = date.today()
 TODAY_STR = _today.strftime("%d%b%y").upper()  # e.g. "26JUN26"
 
 detector = OrderBookDetector(
-    window_ms=500,
-    min_contracts=200.0,
-    min_deltas=3,
+    window_ms=2000,      # 2s window — real event crowds arrive over ~1-2s
+    min_contracts=200.0, # ignore anything below 200 contracts total
+    min_deltas=3,        # require at least 3 separate delta events
+    min_elapsed_ms=100,  # deltas must span at least 100ms — filters single-order sweeps
     max_single_delta=2000.0,
     cooldown_ms=30_000,
 )

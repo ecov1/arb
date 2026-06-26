@@ -23,12 +23,14 @@ class OrderBookDetector:
         window_ms: int = 500,
         min_contracts: float = 5.0,
         min_deltas: int = 2,
-        max_single_delta: float = 2000.0,  # cap to filter fake demo money noise
+        min_elapsed_ms: int = 0,   # require spread across time, not a single sweep
+        max_single_delta: float = 2000.0,
         cooldown_ms: int = 30_000,
     ):
         self.window_ms = window_ms
         self.min_contracts = min_contracts
         self.min_deltas = min_deltas
+        self.min_elapsed_ms = min_elapsed_ms
         self.max_single_delta = max_single_delta
         self.cooldown_ms = cooldown_ms
         self._consumed: dict[str, deque] = {}
@@ -66,12 +68,17 @@ class OrderBookDetector:
         if len(buf) < self.min_deltas:
             return None
 
+        elapsed = (ts_ms - buf[0][0]) if len(buf) > 1 else 0
+
+        # All deltas at the same timestamp = one person's single sweep, not a crowd
+        if elapsed < self.min_elapsed_ms:
+            return None
+
         total = sum(c for _, c in buf)
         if total < self.min_contracts:
             return None
 
         self._last_signal[ticker] = ts_ms
-        elapsed = (ts_ms - buf[0][0]) if len(buf) > 1 else 0
         return OrderBookSignal(
             market_ticker=ticker,
             ts_ms=ts_ms,
