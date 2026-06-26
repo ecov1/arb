@@ -50,8 +50,8 @@ TODAY_STR = _today.strftime("%d%b%y").upper()  # e.g. "26JUN26"
 
 detector = OrderBookDetector(
     window_ms=500,
-    min_contracts=5.0,
-    min_deltas=2,
+    min_contracts=200.0,
+    min_deltas=3,
     max_single_delta=2000.0,
     cooldown_ms=30_000,
 )
