@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -126,14 +127,37 @@ async def main():
         all_markets = await fetch_markets(API_KEY_ID, private_key, rest_url=REST_URL)
         cache_file.write_text(json.dumps(all_markets))
 
+    now = datetime.now(timezone.utc)
+
+    def game_start_time(ticker: str) -> datetime | None:
+        """Parse UTC start time from ticker if present (e.g. KXMLB...-26JUN261840...)."""
+        m = re.search(r"\d{2}[A-Z]{3}\d{2}(\d{4})", ticker)
+        if not m:
+            return None
+        t = m.group(1)
+        return now.replace(hour=int(t[:2]), minute=int(t[2:]), second=0, microsecond=0)
+
+    def is_live(m: dict) -> bool:
+        ticker = m["ticker"]
+        start = game_start_time(ticker)
+        if start:
+            # Ticker encodes start time (MLB-style) — game must have begun
+            return start <= now
+        else:
+            # No start time in ticker (WC/soccer) — use cached ask as proxy:
+            # $0.00 = pre-game/not yet trading, $0.99+ = already resolved
+            ask = float(m.get("yes_ask_dollars") or 0)
+            return 0.02 < ask < 0.98
+
     sports_markets = [
         m for m in all_markets
         if m["ticker"].startswith(SPORTS_PREFIXES)
         and not m["ticker"].startswith(EXCLUDED_PREFIXES)
         and TODAY_STR in m["ticker"]
+        and is_live(m)
     ]
 
-    print(f"[arb] {len(sports_markets)} sports markets for {TODAY_STR} (from {len(all_markets)} total)")
+    print(f"[arb] {len(sports_markets)} live sports markets for {TODAY_STR} (from {len(all_markets)} total)")
 
     # Pre-populate ask prices from REST response
     for m in sports_markets:
@@ -178,10 +202,13 @@ async def main():
 
         ask = latest_ask.get(signal.market_ticker)
         if ask is None:
-            # Fallback: fetch current price from REST
             ask = await cache.ask(signal.market_ticker)
             if ask is not None:
                 latest_ask[signal.market_ticker] = ask
+
+        # Ignore signal if market has no real price — game probably not live yet
+        if not ask or not (0.02 < ask < 0.97):
+            return
 
         title = await cache.title(signal.market_ticker)
         print(
